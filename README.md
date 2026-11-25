@@ -41,13 +41,13 @@ install.sh -d                              # отладка: показывае�
 | 5 | AmneziaWG | 51820/udp | — |
 | 6 | Shadowsocks-2022 | 9443 | — |
 | 7 | MTProto (Telegram) | 2443 | — |
-| 8 | VLESS TLS Vision | 2096/tcp | да |
+| 8 | VLESS TLS Vision | 2083/tcp | да |
 | 9 | Trojan TLS | 2087/tcp | да |
 | CDN | VLESS WS / HTTPUpgrade / XHTTP через Cloudflare | 2053 | да + CF |
 
 ## Заглушки
 
-- `https://photo.example.com` открывает обычный сайт («облачное хранилище фото»). Тот же сайт видит любой, кто стучится на 443 без ключа REALITY или на 2096/2087 не по протоколу.
+- `https://photo.example.com` открывает обычный сайт («облачное хранилище фото»). Тот же сайт видит любой, кто стучится на 443 без ключа REALITY или на 2083/2087 не по протоколу.
 - `https://static.example.com:2053` показывает ту же заглушку через Cloudflare.
 - Сертификаты Let's Encrypt продлеваются автоматически.
 

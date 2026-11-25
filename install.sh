@@ -12,7 +12,7 @@
 #   6. Shadowsocks 2022                      9443/tcp+udp
 #   7. MTProto (FakeTLS, для Telegram)       2443/tcp
 #  Со своим доменом (флаг -D) дополнительно:
-#   8. VLESS + TLS + Vision (сертификат LE)  2096/tcp
+#   8. VLESS + TLS + Vision (сертификат LE)  2083/tcp
 #   9. Trojan + TLS                          2087/tcp
 #   + сайт-заглушка на домене (https://домен открывает обычный сайт),
 #     REALITY маскируется под этот сайт («steal from yourself»),
@@ -76,7 +76,7 @@ REUSE=0; OLD_PP=""
 if [[ -x /usr/local/x-ui/x-ui && -f /etc/x-ui/install-result.env ]]; then
   REUSE=1; OLD_PP=$(sed -n 's/^XUI_PANEL_PORT=["'\'']*\([0-9]*\).*/\1/p' /etc/x-ui/install-result.env | head -1 || true)
 fi
-for p in 80 443 8443 9443 2443 2096 2087; do [[ $p == "$OLD_PP" ]] && continue; [[ -n $(ss -tlnH "( sport = :$p )") ]] && die "Порт $p/tcp занят — скрипт рассчитан на чистый сервер"; done
+for p in 80 443 8443 9443 2443 2083 2087; do [[ $p == "$OLD_PP" ]] && continue; [[ -n $(ss -tlnH "( sport = :$p )") ]] && die "Порт $p/tcp занят — скрипт рассчитан на чистый сервер"; done
 
 # ---------------------------------------------------------------- панель
 step "3x-ui ${VERSION:-(последний релиз)}"
@@ -104,7 +104,7 @@ fi
 ok "Панель $( /usr/local/x-ui/x-ui -v ) установлена"
 # панель могла случайно занять порт одного из протоколов — переносим её
 # shellcheck disable=SC2194
-case " 80 443 2053 2087 2096 2443 8443 9443 51820 " in *" $XUI_PANEL_PORT "*)
+case " 80 443 2053 2083 2087 2096 2443 8443 9443 51820 " in *" $XUI_PANEL_PORT "*)
   NP=$((RANDOM % 10000 + 30000))
   /usr/local/x-ui/x-ui setting -port "$NP" >/dev/null 2>&1 || die "Не удалось сменить порт панели"
   systemctl restart x-ui; sleep 3
@@ -310,7 +310,7 @@ if want 8 || want 9; then [[ -n $DOMAIN ]] || warn "Протоколы 8 и 9 т
 if want 8 && [[ -n $DOMAIN ]]; then
   S=$(jq -nc --arg id "$(cat /proc/sys/kernel/random/uuid)" --argjson c "$(client tls-$SUB)" --argjson fb "$FALLBACK" \
     '{clients:[$c+{id:$id,flow:"xtls-rprx-vision"}],decryption:"none",encryption:"none",fallbacks:$fb}')
-  add "VLESS-TLS-Vision" vless 2096 "$S" "$(tls_stream '["http/1.1"]')"
+  add "VLESS-TLS-Vision" vless 2083 "$S" "$(tls_stream '["http/1.1"]')"
 fi
 
 if want 9 && [[ -n $DOMAIN ]]; then
@@ -324,9 +324,9 @@ step "Фаервол (ufw)"
 SSH_PORTS=$(ss -tlnpH 2>/dev/null | awk '/sshd/{n=split($4,a,":"); print a[n]}' | sort -u)
 for p in ${SSH_PORTS:-22}; do ufw allow "$p/tcp" >/dev/null; done
 ufw allow "${XUI_PANEL_PORT}/tcp" >/dev/null
-for r in 80/tcp 443/tcp 443/udp 8443/tcp 8443/udp 51820/udp 9443/tcp 9443/udp 2443/tcp 2096/tcp 2087/tcp; do ufw allow "$r" >/dev/null; done
+for r in 80/tcp 443/tcp 443/udp 8443/tcp 8443/udp 51820/udp 9443/tcp 9443/udp 2443/tcp 2083/tcp 2087/tcp; do ufw allow "$r" >/dev/null; done
 ufw --force enable >/dev/null
-ok "Открыты: SSH ${SSH_PORTS:-22}, панель ${XUI_PANEL_PORT}, 80, 443, 8443, 51820/udp, 9443, 2443, 2096, 2087"
+ok "Открыты: SSH ${SSH_PORTS:-22}, панель ${XUI_PANEL_PORT}, 80, 443, 8443, 51820/udp, 9443, 2443, 2083, 2087"
 
 # ---------------------------------------------------------------- CDN (по желанию)
 if [[ -n $CDN_DOMAIN ]]; then
