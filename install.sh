@@ -76,7 +76,7 @@ REUSE=0; OLD_PP=""
 if [[ -x /usr/local/x-ui/x-ui && -f /etc/x-ui/install-result.env ]]; then
   REUSE=1; OLD_PP=$(sed -n 's/^XUI_PANEL_PORT=["'\'']*\([0-9]*\).*/\1/p' /etc/x-ui/install-result.env | head -1 || true)
 fi
-for p in 80 443 8443 9443 2443 2083 2087; do [[ $p == "$OLD_PP" ]] && continue; [[ -n $(ss -tlnH "( sport = :$p )") ]] && die "Порт $p/tcp занят — скрипт рассчитан на чистый сервер"; done
+[[ $REUSE == 1 ]] || for p in 80 443 8443 9443 2443 2083 2087; do [[ $p == "$OLD_PP" ]] && continue; [[ -n $(ss -tlnH "( sport = :$p )") ]] && die "Порт $p/tcp занят — скрипт рассчитан на чистый сервер"; done
 
 # ---------------------------------------------------------------- панель
 step "3x-ui ${VERSION:-(последний релиз)}"

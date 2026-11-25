@@ -27,8 +27,9 @@
 set -euo pipefail
 trap 'printf "\n\033[31m✖ Скрипт остановился на строке %s: %s\033[0m\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
-DOMAIN=""; CF_TOKEN=""; PORT=""; P_USER=""; P_PASS=""; P_URL=""; EMAIL=""
-while getopts "d:t:p:u:w:l:e:" o; do case $o in
+DOMAIN=""; CF_TOKEN=""; PORT=""; P_USER=""; P_PASS=""; P_URL=""; EMAIL=""; WITH_CLIENTS=0
+while getopts "d:t:p:u:w:l:e:C" o; do case $o in
+  C) WITH_CLIENTS=1;;
   d) DOMAIN=$OPTARG;; t) CF_TOKEN=$OPTARG;; p) PORT=$OPTARG;;
   u) P_USER=$OPTARG;; w) P_PASS=$OPTARG;; l) P_URL=$OPTARG;; e) EMAIL=$OPTARG;;
   *) sed -n '2,30p' "$0"; exit 1;; esac; done
@@ -138,7 +139,8 @@ UUID=$(cat /proc/sys/kernel/random/uuid); SUBID=$(rnd 16)
 BASE=$((RANDOM % 5000 + 20000))
 P_WS="/$(rnd 10)"; P_HU="/$(rnd 10)"; P_XH="/$(rnd 10)"
 SNIFF='{"enabled":true,"destOverride":["http","tls","quic"],"metadataOnly":false,"routeOnly":false}'
-settings() { jq -nc --arg id "$UUID" --arg e "$1" --arg s "$SUBID" '{clients:[{id:$id,flow:"",email:$e,limitIp:0,totalGB:0,expiryTime:0,enable:true,tgId:"",subId:$s,comment:"",reset:0}],decryption:"none",fallbacks:[]}'; }
+settings() { [[ $WITH_CLIENTS == 1 ]] || { echo '{"clients":[],"decryption":"none","fallbacks":[]}'; return; }
+  jq -nc --arg id "$UUID" --arg e "$1" --arg s "$SUBID" '{clients:[{id:$id,flow:"",email:$e,limitIp:0,totalGB:0,expiryTime:0,enable:true,tgId:"",subId:$s,comment:"",reset:0}],decryption:"none",fallbacks:[]}'; }
 add() { # remark port settings stream
   local r; r=$(curl -sk -b "$JAR" "${P_URL}panel/api/inbounds/add" \
     --data-urlencode "remark=$1" --data-urlencode "enable=true" --data-urlencode "listen=127.0.0.1" \
@@ -228,6 +230,7 @@ chk "XHTTP"       "$P_XH"
 
 # ---------------------------------------------------------------- ссылки
 enc() { jq -rn --arg v "$1" '$v|@uri'; }
+[[ $WITH_CLIENTS == 1 ]] || UUID="UUID_КЛИЕНТА"
 COMMON="encryption=none&security=tls&sni=$DOMAIN&fp=chrome&host=$DOMAIN"
 L_WS="vless://$UUID@$DOMAIN:$PORT?$COMMON&alpn=http%2F1.1&type=ws&path=$(enc "$P_WS")#CDN-WS"
 L_HU="vless://$UUID@$DOMAIN:$PORT?$COMMON&alpn=http%2F1.1&type=httpupgrade&path=$(enc "$P_HU")#CDN-HTTPUpgrade"
