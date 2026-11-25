@@ -340,7 +340,9 @@ if [[ -n $CDN_DOMAIN ]]; then
   CDN_SH=$SCRIPT_DIR/cdn.sh
   if [[ ! -f $CDN_SH ]]; then
     CDN_SH=/tmp/3x-ui-cdn.sh
-    curl -fsSL https://raw.githubusercontent.com/Jasis7/3x-ui-installer/main/cdn.sh -o "$CDN_SH" || die "Не удалось скачать cdn.sh"
+    # через API GitHub — без 5-минутного кэша raw.githubusercontent.com
+    curl -fsSL -H "Accept: application/vnd.github.raw" https://api.github.com/repos/Jasis7/3x-ui-installer/contents/cdn.sh -o "$CDN_SH" \
+      || curl -fsSL https://raw.githubusercontent.com/Jasis7/3x-ui-installer/main/cdn.sh -o "$CDN_SH" || die "Не удалось скачать cdn.sh"
   fi
   CDN_ARGS=(-d "$CDN_DOMAIN" -t "$CF_TOKEN" -u "$XUI_USERNAME" -w "$XUI_PASSWORD" -l "$API_BASE/" -p 2053)
   bash "$CDN_SH" "${CDN_ARGS[@]}" \
