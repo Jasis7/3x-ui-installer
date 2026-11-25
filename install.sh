@@ -33,6 +33,7 @@
 #    bash install.sh -v v3.11.0                          # конкретная версия панели
 # =====================================================================
 set -euo pipefail
+trap 'printf "\n\033[31m✖ Скрипт остановился на строке %s: %s\033[0m\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 REALITY_SNI="www.microsoft.com"; R_SET=0; ONLY=""; VERSION=""; CDN_DOMAIN=""; CF_TOKEN=""; DOMAIN=""; BASE=""; DEBUG=0
 while getopts "r:o:v:c:t:D:b:d" o; do case $o in
@@ -44,7 +45,7 @@ ok()   { printf '  \033[32m✔\033[0m %s\n' "$*"; }
 warn() { printf '  \033[33m⚠\033[0m %s\n' "$*"; }
 die()  { printf '\n\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
-rnd()  { tr -dc 'a-z0-9' </dev/urandom | head -c "$1"; }
+rnd()  { local s=""; while (( ${#s} < $1 )); do s+=$(openssl rand -hex 16); done; printf '%s' "${s:0:$1}"; }
 want() { [[ " $ONLY " == *" $1 "* ]]; }
 
 [[ $EUID -eq 0 ]] || die "Запустите от root"
@@ -71,13 +72,16 @@ if ! sysctl -n net.ipv4.tcp_congestion_control | grep -q bbr; then
   sysctl -q --system >/dev/null 2>&1 || true
 fi
 ok "BBR: $(sysctl -n net.ipv4.tcp_congestion_control)"
-for p in 80 443 8443 9443 2443 2096 2087; do ss -tlnH "( sport = :$p )" | grep -q . && die "Порт $p/tcp занят — скрипт рассчитан на чистый сервер"; done
+REUSE=0; [[ -x /usr/local/x-ui/x-ui && -f /etc/x-ui/install-result.env ]] && REUSE=1
+for p in 80 443 8443 9443 2443 2096 2087; do [[ -n $(ss -tlnH "( sport = :$p )") ]] && die "Порт $p/tcp занят — скрипт рассчитан на чистый сервер"; done
 
 # ---------------------------------------------------------------- панель
 step "3x-ui ${VERSION:-(последний релиз)}"
-if [[ -x /usr/local/x-ui/x-ui ]]; then
+if [[ $REUSE == 1 ]]; then
+  warn "3x-ui уже установлена этим скриптом — продолжаю с ней (повторный запуск)"
+elif [[ -x /usr/local/x-ui/x-ui ]]; then
   die "3x-ui уже установлена. Этот скрипт — для чистого сервера (для существующей панели есть cdn.sh)"
-fi
+else
 # Официальный установщик в неинтерактивном режиме: случайные логин/пароль/порт/путь,
 # панель по HTTPS с сертификатом Let's Encrypt на IP (нужен открытый 80 порт).
 curl -fsSL https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/xui-install.sh
@@ -89,6 +93,7 @@ if ! XUI_NONINTERACTIVE=1 XUI_SSL_MODE=ip XUI_SERVER_IP="$IP" bash /tmp/xui-inst
   else
     tail -30 /tmp/xui-install.log; die "Официальный установщик завершился с ошибкой (лог: /tmp/xui-install.log)"
   fi
+fi
 fi
 [[ -f /etc/x-ui/install-result.env ]] || die "Нет /etc/x-ui/install-result.env — установка не завершилась"
 # shellcheck disable=SC1091

@@ -25,6 +25,7 @@
 #  Если 443 занят Reality — скрипт сам возьмёт 2053 (или укажите -p).
 # =====================================================================
 set -euo pipefail
+trap 'printf "\n\033[31m✖ Скрипт остановился на строке %s: %s\033[0m\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 DOMAIN=""; CF_TOKEN=""; PORT=""; P_USER=""; P_PASS=""; P_URL=""; EMAIL=""
 while getopts "d:t:p:u:w:l:e:" o; do case $o in
@@ -36,7 +37,7 @@ ok()   { printf '  \033[32m✔\033[0m %s\n' "$*"; }
 warn() { printf '  \033[33m⚠\033[0m %s\n' "$*"; }
 die()  { printf '\n\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
-rnd()  { tr -dc 'a-z0-9' </dev/urandom | head -c "$1"; }
+rnd()  { local s=""; while (( ${#s} < $1 )); do s+=$(openssl rand -hex 16); done; printf '%s' "${s:0:$1}"; }
 
 [[ $EUID -eq 0 ]] || die "Запустите от root"
 [[ -n $DOMAIN && -n $CF_TOKEN ]] || die "Нужны -d домен и -t токен Cloudflare (см. шапку скрипта)"
@@ -211,7 +212,7 @@ ok "nginx слушает $PORT"
 # ---------------------------------------------------------------- самопроверка
 step "Проверка через Cloudflare (ждём DNS до 60 с)"
 code() { curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN:$PORT$1" || echo 000; }
-for i in $(seq 12); do [[ $(code /) == 200 ]] && break; sleep 5; done
+for _ in $(seq 12); do [[ $(code /) == 200 ]] && break; sleep 5; done
 C=$(code /)
 case $C in
   200) ok "Сайт-заглушка открывается через Cloudflare" ;;
