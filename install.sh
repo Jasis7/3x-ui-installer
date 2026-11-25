@@ -72,8 +72,11 @@ if ! sysctl -n net.ipv4.tcp_congestion_control | grep -q bbr; then
   sysctl -q --system >/dev/null 2>&1 || true
 fi
 ok "BBR: $(sysctl -n net.ipv4.tcp_congestion_control)"
-REUSE=0; [[ -x /usr/local/x-ui/x-ui && -f /etc/x-ui/install-result.env ]] && REUSE=1
-for p in 80 443 8443 9443 2443 2096 2087; do [[ -n $(ss -tlnH "( sport = :$p )") ]] && die "Порт $p/tcp занят — скрипт рассчитан на чистый сервер"; done
+REUSE=0; OLD_PP=""
+if [[ -x /usr/local/x-ui/x-ui && -f /etc/x-ui/install-result.env ]]; then
+  REUSE=1; OLD_PP=$(sed -n 's/^XUI_PANEL_PORT=["'\'']*\([0-9]*\).*/\1/p' /etc/x-ui/install-result.env | head -1 || true)
+fi
+for p in 80 443 8443 9443 2443 2096 2087; do [[ $p == "$OLD_PP" ]] && continue; [[ -n $(ss -tlnH "( sport = :$p )") ]] && die "Порт $p/tcp занят — скрипт рассчитан на чистый сервер"; done
 
 # ---------------------------------------------------------------- панель
 step "3x-ui ${VERSION:-(последний релиз)}"
@@ -99,6 +102,17 @@ fi
 # shellcheck disable=SC1091
 . /etc/x-ui/install-result.env
 ok "Панель $( /usr/local/x-ui/x-ui -v ) установлена"
+# панель могла случайно занять порт одного из протоколов — переносим её
+# shellcheck disable=SC2194
+case " 80 443 2053 2087 2096 2443 8443 9443 51820 " in *" $XUI_PANEL_PORT "*)
+  NP=$((RANDOM % 10000 + 30000))
+  /usr/local/x-ui/x-ui setting -port "$NP" >/dev/null 2>&1 || die "Не удалось сменить порт панели"
+  systemctl restart x-ui; sleep 3
+  sed -i "s#\(XUI_ACCESS_URL=.*:\)$XUI_PANEL_PORT#\1$NP#; s#^XUI_PANEL_PORT=.*#XUI_PANEL_PORT=$NP#" /etc/x-ui/install-result.env
+  XUI_ACCESS_URL=${XUI_ACCESS_URL/:$XUI_PANEL_PORT/:$NP}
+  warn "Панель стояла на порту $XUI_PANEL_PORT (нужен протоколам) — перенесена на $NP"
+  XUI_PANEL_PORT=$NP;;
+esac
 
 # API: локально, по Bearer-токену из install-result.env
 WBP="${XUI_WEB_BASE_PATH#/}"; WBP="${WBP%/}"
