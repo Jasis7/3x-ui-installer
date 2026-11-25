@@ -27,8 +27,9 @@
 set -euo pipefail
 trap 'printf "\n\033[31m✖ Скрипт остановился на строке %s: %s\033[0m\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
-DOMAIN=""; CF_TOKEN=""; PORT=""; P_USER=""; P_PASS=""; P_URL=""; EMAIL=""; WITH_CLIENTS=0
-while getopts "d:t:p:u:w:l:e:C" o; do case $o in
+DOMAIN=""; CF_TOKEN=""; PORT=""; P_USER=""; P_PASS=""; P_URL=""; EMAIL=""; WITH_CLIENTS=0; ATTACH=""
+while getopts "d:t:p:u:w:l:e:a:C" o; do case $o in
+  a) ATTACH=$OPTARG;;
   C) WITH_CLIENTS=1;;
   d) DOMAIN=$OPTARG;; t) CF_TOKEN=$OPTARG;; p) PORT=$OPTARG;;
   u) P_USER=$OPTARG;; w) P_PASS=$OPTARG;; l) P_URL=$OPTARG;; e) EMAIL=$OPTARG;;
@@ -119,21 +120,36 @@ fi
 
 # ---------------------------------------------------------------- панель
 step "Панель 3x-ui"
-if [[ -z $P_URL ]]; then
-  INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null || true)
-  PP=$(grep -oiE 'port: *[0-9]+' <<<"$INFO" | grep -oE "[0-9]+" | head -1 || true)
-  PB=$(grep -oiE 'webBasePath: *[^ ]+' <<<"$INFO" | awk "{print \$2}" | head -1 || true)
-  PB=${PB:-/}; [[ $PB == /* ]] || PB="/$PB"; [[ $PB == */ ]] || PB="$PB/"
-  P_URL="http://127.0.0.1:${PP:-2053}${PB}"
+AUTH=()
+# 3x-ui ≥3.x, поставленная официальным установщиком: есть API-токен — входим по нему
+if [[ -f /etc/x-ui/install-result.env ]]; then
+  # shellcheck disable=SC1091
+  . /etc/x-ui/install-result.env
+  if [[ -n ${XUI_API_TOKEN:-} ]]; then
+    WBP="${XUI_WEB_BASE_PATH#/}"; WBP="${WBP%/}"; [[ -n $WBP ]] && WBP="$WBP/"
+    P_URL="https://127.0.0.1:${XUI_PANEL_PORT}/${WBP}"
+    curl -sk -o /dev/null --max-time 5 "$P_URL" || P_URL=${P_URL/https:/http:}
+    AUTH=(-H "Authorization: Bearer $XUI_API_TOKEN")
+  fi
 fi
-# если панель на https — ходим к ней по https без проверки сертификата (локально)
-curl -s -o /dev/null --max-time 5 "$P_URL" || P_URL=${P_URL/http:/https:}
-[[ -n $P_USER ]] || read -rp "  Логин панели: " P_USER
-[[ -n $P_PASS ]] || { read -rsp "  Пароль панели: " P_PASS; echo; }
 JAR=$(mktemp); trap 'rm -f "$JAR"' EXIT
-L=$(curl -sk -c "$JAR" --data-urlencode "username=$P_USER" --data-urlencode "password=$P_PASS" "${P_URL}login")
-[[ $(jq -r .success <<<"$L" 2>/dev/null) == true ]] || die "Вход в панель не удался ($P_URL). Укажите адрес вручную: -l http://127.0.0.1:ПОРТ/ПУТЬ/"
-ok "Вход в панель: $P_URL"
+if [[ ${#AUTH[@]} -eq 0 ]]; then
+  if [[ -z $P_URL ]]; then
+    INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null || true)
+    PP=$(grep -oiE 'port: *[0-9]+' <<<"$INFO" | grep -oE "[0-9]+" | head -1 || true)
+    PB=$(grep -oiE 'webBasePath: *[^ ]+' <<<"$INFO" | awk "{print \$2}" | head -1 || true)
+    PB=${PB:-/}; [[ $PB == /* ]] || PB="/$PB"; [[ $PB == */ ]] || PB="$PB/"
+    P_URL="http://127.0.0.1:${PP:-2053}${PB}"
+  fi
+  curl -s -o /dev/null --max-time 5 "$P_URL" || P_URL=${P_URL/http:/https:}
+  [[ -n $P_USER ]] || read -rp "  Логин панели: " P_USER
+  [[ -n $P_PASS ]] || { read -rsp "  Пароль панели: " P_PASS; echo; }
+  L=$(curl -sk -c "$JAR" --data-urlencode "username=$P_USER" --data-urlencode "password=$P_PASS" "${P_URL}login" || true)
+  [[ $(jq -r .success <<<"$L" 2>/dev/null) == true ]] || die "Вход в панель не удался ($P_URL). Укажите адрес вручную: -l http://127.0.0.1:ПОРТ/ПУТЬ/"
+  AUTH=(-b "$JAR")
+fi
+[[ $(curl -sk "${AUTH[@]}" "${P_URL}panel/api/server/getNewUUID" | jq -r .success 2>/dev/null) == true ]] || die "API панели не отвечает ($P_URL)"
+ok "Панель: $P_URL"
 
 UUID=$(cat /proc/sys/kernel/random/uuid); SUBID=$(rnd 16)
 BASE=$((RANDOM % 5000 + 20000))
@@ -142,13 +158,12 @@ SNIFF='{"enabled":true,"destOverride":["http","tls","quic"],"metadataOnly":false
 settings() { [[ $WITH_CLIENTS == 1 ]] || { echo '{"clients":[],"decryption":"none","fallbacks":[]}'; return; }
   jq -nc --arg id "$UUID" --arg e "$1" --arg s "$SUBID" '{clients:[{id:$id,flow:"",email:$e,limitIp:0,totalGB:0,expiryTime:0,enable:true,tgId:"",subId:$s,comment:"",reset:0}],decryption:"none",fallbacks:[]}'; }
 add() { # remark port settings stream
-  local r; r=$(curl -sk -b "$JAR" "${P_URL}panel/api/inbounds/add" \
-    --data-urlencode "remark=$1" --data-urlencode "enable=true" --data-urlencode "listen=127.0.0.1" \
-    --data-urlencode "port=$2" --data-urlencode "protocol=vless" --data-urlencode "expiryTime=0" \
-    --data-urlencode "up=0" --data-urlencode "down=0" --data-urlencode "total=0" \
-    --data-urlencode "settings=$3" --data-urlencode "streamSettings=$4" --data-urlencode "sniffing=$SNIFF")
+  local body r
+  body=$(jq -nc --arg remark "$1" --argjson port "$2" --argjson s "$3" --argjson st "$4" --argjson sn "$SNIFF" \
+    '{remark:$remark,enable:true,listen:"127.0.0.1",port:$port,protocol:"vless",expiryTime:0,total:0,up:0,down:0,settings:$s,streamSettings:$st,sniffing:$sn}')
+  r=$(curl -sk "${AUTH[@]}" -H "Content-Type: application/json" --data "$body" "${P_URL}panel/api/inbounds/add" || true)
   if [[ $(jq -r .success <<<"$r" 2>/dev/null) == true ]]; then ok "$1 (id $(jq -r '.obj.id' <<<"$r"))"; IDS+=("$(jq -r '.obj.id' <<<"$r")")
-  else warn "$1 не создан: $(jq -r '.msg // .' <<<"$r")"; fi; }
+  else warn "$1 не создан: $(jq -r '.msg // .' <<<"$r" 2>/dev/null | head -c 300)"; fi; }
 IDS=()
 # externalProxy: в ссылках подписки адрес = домен:порт Cloudflare с TLS (а не 127.0.0.1)
 XP=$(jq -nc --arg d "$DOMAIN" --argjson p "$PORT" '{externalProxy:[{forceTls:"tls",dest:$d,port:$p,remark:"",sni:$d,fingerprint:"chrome"}]}')
@@ -157,6 +172,11 @@ add "CDN-WS"    $BASE       "$(settings cdn-ws-$SUBID)" "$(jq -nc --arg p "$P_WS
 add "CDN-HU"    $((BASE+1)) "$(settings cdn-hu-$SUBID)" "$(jq -nc --arg p "$P_HU" --arg h "$DOMAIN" --argjson xp "$XP" '{network:"httpupgrade",security:"none",httpupgradeSettings:{path:$p,host:$h,headers:{}}} + $xp')"
 add "CDN-XHTTP" $((BASE+2)) "$(settings cdn-xh-$SUBID)" "$(jq -nc --arg p "$P_XH" --arg h "$DOMAIN" --argjson xp "$XP" '{network:"xhttp",security:"none",xhttpSettings:{path:$p,host:$h,headers:{},mode:"packet-up"}} + $xp')"
 [[ ${#IDS[@]} -gt 0 ]] || die "Ни один инбаунд не создан"
+if [[ -n $ATTACH ]]; then
+  R=$(curl -sk "${AUTH[@]}" -H "Content-Type: application/json" --data "$(printf '%s\n' "${IDS[@]}" | jq -sc '{inboundIds:.}')" \
+      "${P_URL}panel/api/clients/$ATTACH/attach" || true)
+  [[ $(jq -r .success <<<"$R" 2>/dev/null) == true ]] && ok "Клиент $ATTACH подключён к CDN-инбаундам" || warn "Клиента $ATTACH добавить не удалось: $(jq -r '.msg // .' <<<"$R" 2>/dev/null | head -c 200)"
+fi
 
 # ---------------------------------------------------------------- nginx
 step "nginx на порту $PORT"
