@@ -226,8 +226,10 @@ SUB=$(rnd 16)
 client() { jq -nc --arg e "$1" --arg s "$SUB" '{email:$e,limitIp:0,totalGB:0,expiryTime:0,enable:true,tgId:0,subId:$s,comment:"installer",reset:0}'; }
 SNIFF='{"enabled":true,"destOverride":["http","tls","quic"],"metadataOnly":false,"routeOnly":false}'
 CREATED=(); FAILED=()
+EXISTING=$(api GET /panel/api/inbounds/list | jq -r '.obj[]?.remark' 2>/dev/null || true)
 add() { # name protocol port settings stream
   local body r
+  if grep -qxF "$1" <<<"$EXISTING"; then ok "$1 — уже есть (пропускаю)"; CREATED+=("$1"); return; fi
   body=$(jq -nc --arg remark "$1" --arg proto "$2" --argjson port "$3" --argjson s "$4" --argjson st "$5" --argjson sn "$SNIFF" \
     '{remark:$remark,enable:true,listen:"",port:$port,protocol:$proto,expiryTime:0,total:0,up:0,down:0,
       settings:$s,streamSettings:$st,sniffing:$sn}')
@@ -283,7 +285,7 @@ fi
 
 if want 5; then
   # Блок server не передаём: панель сама сгенерирует ключи и случайные параметры обфускации
-  S=$(jq -nc --argjson c "$(client awg-$SUB)" '{clients:[$c]}')
+  S=$(jq -nc --argjson c "$(client awg-$SUB)" '{clients:[$c+{allowedIPs:["10.0.0.2/32"],keepAlive:0}]}')
   add "AmneziaWG" amneziawg 51820 "$S" '{}'
 fi
 
@@ -331,8 +333,12 @@ ok "Открыты: SSH ${SSH_PORTS:-22}, панель ${XUI_PANEL_PORT}, 80, 44
 # ---------------------------------------------------------------- CDN (по желанию)
 if [[ -n $CDN_DOMAIN ]]; then
   step "Cloudflare CDN"
-  [[ -f $SCRIPT_DIR/cdn.sh ]] || curl -fsSL https://raw.githubusercontent.com/Jasis7/3x-ui-installer/main/cdn.sh -o "$SCRIPT_DIR/cdn.sh"
-  bash "$SCRIPT_DIR/cdn.sh" -d "$CDN_DOMAIN" -t "$CF_TOKEN" -u "$XUI_USERNAME" -w "$XUI_PASSWORD" -l "$API_BASE/" -p 2053 \
+  CDN_SH=$SCRIPT_DIR/cdn.sh
+  if [[ ! -f $CDN_SH ]]; then
+    CDN_SH=/tmp/3x-ui-cdn.sh
+    curl -fsSL https://raw.githubusercontent.com/Jasis7/3x-ui-installer/main/cdn.sh -o "$CDN_SH" || die "Не удалось скачать cdn.sh"
+  fi
+  bash "$CDN_SH" -d "$CDN_DOMAIN" -t "$CF_TOKEN" -u "$XUI_USERNAME" -w "$XUI_PASSWORD" -l "$API_BASE/" -p 2053 \
     || warn "CDN не настроился — смотрите вывод выше, остальные протоколы работают"
 fi
 
