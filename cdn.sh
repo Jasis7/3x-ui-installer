@@ -156,6 +156,8 @@ add "CDN-XHTTP" $((BASE+2)) "$(settings cdn-xh-$SUBID)" "$(jq -nc --arg p "$P_XH
 # ---------------------------------------------------------------- nginx
 step "nginx на порту $PORT"
 mkdir -p /var/www/cdn-cover
+# если install.sh уже сделал сайт-заглушку — используем её же
+[[ -s /var/www/cdn-cover/index.html || ! -s /var/www/decoy/index.html ]] || cp /var/www/decoy/index.html /var/www/cdn-cover/
 [[ -s /var/www/cdn-cover/index.html ]] || cat > /var/www/cdn-cover/index.html <<'HTML'
 <!doctype html><html lang="en"><head><meta charset="utf-8"><title>Welcome</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:15vh auto;padding:0 20px;color:#333}</style></head><body><h1>Under construction</h1><p>This site is being updated. Please check back later.</p></body></html>
 HTML
