@@ -150,10 +150,12 @@ add() { # remark port settings stream
   if [[ $(jq -r .success <<<"$r" 2>/dev/null) == true ]]; then ok "$1 (id $(jq -r '.obj.id' <<<"$r"))"; IDS+=("$(jq -r '.obj.id' <<<"$r")")
   else warn "$1 не создан: $(jq -r '.msg // .' <<<"$r")"; fi; }
 IDS=()
+# externalProxy: в ссылках подписки адрес = домен:порт Cloudflare с TLS (а не 127.0.0.1)
+XP=$(jq -nc --arg d "$DOMAIN" --argjson p "$PORT" '{externalProxy:[{forceTls:"tls",dest:$d,port:$p,remark:"",sni:$d,fingerprint:"chrome"}]}')
 step "Инбаунды (слушают только 127.0.0.1)"
-add "CDN-WS"    $BASE       "$(settings cdn-ws-$SUBID)" "$(jq -nc --arg p "$P_WS" --arg h "$DOMAIN" '{network:"ws",security:"none",wsSettings:{path:$p,host:$h,headers:{}}}')"
-add "CDN-HU"    $((BASE+1)) "$(settings cdn-hu-$SUBID)" "$(jq -nc --arg p "$P_HU" --arg h "$DOMAIN" '{network:"httpupgrade",security:"none",httpupgradeSettings:{path:$p,host:$h,headers:{}}}')"
-add "CDN-XHTTP" $((BASE+2)) "$(settings cdn-xh-$SUBID)" "$(jq -nc --arg p "$P_XH" --arg h "$DOMAIN" '{network:"xhttp",security:"none",xhttpSettings:{path:$p,host:$h,headers:{},mode:"packet-up"}}')"
+add "CDN-WS"    $BASE       "$(settings cdn-ws-$SUBID)" "$(jq -nc --arg p "$P_WS" --arg h "$DOMAIN" --argjson xp "$XP" '{network:"ws",security:"none",wsSettings:{path:$p,host:$h,headers:{}}} + $xp')"
+add "CDN-HU"    $((BASE+1)) "$(settings cdn-hu-$SUBID)" "$(jq -nc --arg p "$P_HU" --arg h "$DOMAIN" --argjson xp "$XP" '{network:"httpupgrade",security:"none",httpupgradeSettings:{path:$p,host:$h,headers:{}}} + $xp')"
+add "CDN-XHTTP" $((BASE+2)) "$(settings cdn-xh-$SUBID)" "$(jq -nc --arg p "$P_XH" --arg h "$DOMAIN" --argjson xp "$XP" '{network:"xhttp",security:"none",xhttpSettings:{path:$p,host:$h,headers:{},mode:"packet-up"}} + $xp')"
 [[ ${#IDS[@]} -gt 0 ]] || die "Ни один инбаунд не создан"
 
 # ---------------------------------------------------------------- nginx

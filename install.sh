@@ -29,7 +29,7 @@
 #    bash install.sh -D vpn.example.com -t CF_TOKEN      # домен в Cloudflare: запись создаст сам
 #    bash install.sh -c cdn.example.com -t CF_TOKEN      # + Cloudflare CDN
 #    bash install.sh -r www.microsoft.com                # свой REALITY-target
-#    bash install.sh -C                                  # + тестовый клиент в каждом инбаунде
+#    bash install.sh -C                                  # + один клиент «test» во всех инбаундах + ссылка подписки
 #                                                        #   (по умолчанию — только инбаунды, клиентов добавляете сами)
 #    bash install.sh -o "1 2 3 5"                        # только выбранные протоколы
 #    bash install.sh -v v3.11.0                          # конкретная версия панели
@@ -231,8 +231,8 @@ SNIFF='{"enabled":true,"destOverride":["http","tls","quic"],"metadataOnly":false
 CREATED=(); FAILED=()
 EXISTING=$(api GET /panel/api/inbounds/list | jq -r '.obj[]?.remark' 2>/dev/null || true)
 add() { # name protocol port settings stream
-  local body r s="$4"
-  [[ $WITH_CLIENTS == 1 ]] || s=$(jq -c '.clients=[]' <<<"$s")
+  local body r s
+  s=$(jq -c '.clients=[]' <<<"$4")   # клиенты добавляются отдельно (один на все инбаунды)
   if grep -qxF "$1" <<<"$EXISTING"; then ok "$1 — уже есть (пропускаю)"; CREATED+=("$1"); return; fi
   body=$(jq -nc --arg remark "$1" --arg proto "$2" --argjson port "$3" --argjson s "$s" --argjson st "$5" --argjson sn "$SNIFF" \
     '{remark:$remark,enable:true,listen:"",port:$port,protocol:$proto,expiryTime:0,total:0,up:0,down:0,
@@ -343,9 +343,39 @@ if [[ -n $CDN_DOMAIN ]]; then
     curl -fsSL https://raw.githubusercontent.com/Jasis7/3x-ui-installer/main/cdn.sh -o "$CDN_SH" || die "Не удалось скачать cdn.sh"
   fi
   CDN_ARGS=(-d "$CDN_DOMAIN" -t "$CF_TOKEN" -u "$XUI_USERNAME" -w "$XUI_PASSWORD" -l "$API_BASE/" -p 2053)
-  [[ $WITH_CLIENTS == 1 ]] && CDN_ARGS+=(-C)
   bash "$CDN_SH" "${CDN_ARGS[@]}" \
     || warn "CDN не настроился — смотрите вывод выше, остальные протоколы работают"
+fi
+
+# ---------------------------------------------------------------- подписка (на домене, с настоящим сертификатом)
+SUB_URL=""
+if [[ -n $DOMAIN && ${XUI_DB_TYPE:-sqlite} == sqlite && -f /etc/x-ui/x-ui.db ]]; then
+  step "Подписка"
+  apt-get install -y -qq sqlite3 >/dev/null
+  DB=/etc/x-ui/x-ui.db
+  setk() { local n; n=$(sqlite3 "$DB" "SELECT count(*) FROM settings WHERE key='$1';")
+    if [[ $n == 0 ]]; then sqlite3 "$DB" "INSERT INTO settings(key,value) VALUES('$1','$2');"
+    else sqlite3 "$DB" "UPDATE settings SET value='$2' WHERE key='$1';"; fi; }
+  setk subEnable true; setk subDomain "$DOMAIN"; setk subCertFile "$CERT_FILE"; setk subKeyFile "$KEY_FILE"
+  SUB_PORT=$(sqlite3 "$DB" "SELECT value FROM settings WHERE key='subPort';"); SUB_PORT=${SUB_PORT:-2096}
+  SUB_PATH=$(sqlite3 "$DB" "SELECT value FROM settings WHERE key='subPath';"); SUB_PATH=${SUB_PATH:-/sub/}
+  ufw allow "$SUB_PORT/tcp" >/dev/null
+  x-ui restart >/dev/null 2>&1 || systemctl restart x-ui
+  for _ in $(seq 20); do [[ $(api GET /panel/api/server/getNewUUID | jq -r .success 2>/dev/null) == true ]] && break; sleep 2; done
+  ok "Подписка на https://$DOMAIN:$SUB_PORT$SUB_PATH… (сертификат Let's Encrypt)"
+fi
+
+# ---------------------------------------------------------------- один тестовый клиент во всех инбаундах
+if [[ $WITH_CLIENTS == 1 ]]; then
+  step "Клиент test"
+  IDS_JSON=$(api GET /panel/api/inbounds/list | jq -c '[.obj[]?.id]' 2>/dev/null || echo '[]')
+  BODY=$(jq -nc --arg s "$SUB" --argjson ids "$IDS_JSON" \
+    '{client:{email:"test",subId:$s,flow:"xtls-rprx-vision",enable:true,totalGB:0,expiryTime:0,limitIp:0,limitHwid:0,tgId:0,comment:"installer"},inboundIds:$ids}')
+  R=$(api POST /panel/api/clients/add "$BODY")
+  [[ $DEBUG == 1 ]] && { echo "$BODY"; echo "$R"; }
+  if [[ $(jq -r .success <<<"$R" 2>/dev/null) == true ]]; then ok "Клиент test добавлен во все инбаунды ($(jq length <<<"$IDS_JSON") шт.)"
+  else warn "Клиент добавлен не везде: $(jq -r '.msg // .' <<<"$R" | head -c 400)"; fi
+  [[ -n ${SUB_PORT:-} ]] && SUB_URL="https://$DOMAIN:$SUB_PORT$SUB_PATH$SUB"
 fi
 
 # ---------------------------------------------------------------- итог
@@ -357,7 +387,9 @@ LINKS=$(api GET /panel/api/inbounds/allLinks | jq -r '.obj // empty | if type=="
   echo "Логин:  ${XUI_USERNAME}"
   echo "Пароль: ${XUI_PASSWORD}"
   echo
-  [[ $WITH_CLIENTS == 1 ]] && echo "Подписка тестового клиента: панель → Клиенты → subId $SUB" || echo "Клиентов нет — добавьте в панели (Клиенты → Добавить, отметить нужные инбаунды)"
+  if [[ -n $SUB_URL ]]; then echo "ПОДПИСКА (клиент test): $SUB_URL"
+  elif [[ $WITH_CLIENTS == 1 ]]; then echo "Подписка клиента test: панель → Клиенты → test"
+  else echo "Клиентов нет — добавьте в панели (Клиенты → Добавить, отметить нужные инбаунды)"; fi
   echo
   echo "Ссылки:"
   echo "${LINKS:-(не удалось получить — откройте панель)}"
