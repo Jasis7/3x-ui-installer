@@ -29,14 +29,17 @@
 #    bash install.sh -D vpn.example.com -t CF_TOKEN      # домен в Cloudflare: запись создаст сам
 #    bash install.sh -c cdn.example.com -t CF_TOKEN      # + Cloudflare CDN
 #    bash install.sh -r www.microsoft.com                # свой REALITY-target
+#    bash install.sh -C                                  # + тестовый клиент в каждом инбаунде
+#                                                        #   (по умолчанию — только инбаунды, клиентов добавляете сами)
 #    bash install.sh -o "1 2 3 5"                        # только выбранные протоколы
 #    bash install.sh -v v3.11.0                          # конкретная версия панели
 # =====================================================================
 set -euo pipefail
 trap 'printf "\n\033[31m✖ Скрипт остановился на строке %s: %s\033[0m\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
-REALITY_SNI="www.microsoft.com"; R_SET=0; ONLY=""; VERSION=""; CDN_DOMAIN=""; CF_TOKEN=""; DOMAIN=""; BASE=""; DEBUG=0
-while getopts "r:o:v:c:t:D:b:d" o; do case $o in
+REALITY_SNI="www.microsoft.com"; R_SET=0; ONLY=""; VERSION=""; CDN_DOMAIN=""; CF_TOKEN=""; DOMAIN=""; BASE=""; DEBUG=0; WITH_CLIENTS=0
+while getopts "r:o:v:c:t:D:b:Cd" o; do case $o in
+  C) WITH_CLIENTS=1;;
   r) REALITY_SNI=$OPTARG; R_SET=1;; o) ONLY=$OPTARG;; v) VERSION=$OPTARG;;
   c) CDN_DOMAIN=$OPTARG;; t) CF_TOKEN=$OPTARG;; D) DOMAIN=$OPTARG;; b) BASE=$OPTARG;; d) DEBUG=1;;
   *) sed -n '2,34p' "$0"; exit 1;; esac; done
@@ -228,9 +231,10 @@ SNIFF='{"enabled":true,"destOverride":["http","tls","quic"],"metadataOnly":false
 CREATED=(); FAILED=()
 EXISTING=$(api GET /panel/api/inbounds/list | jq -r '.obj[]?.remark' 2>/dev/null || true)
 add() { # name protocol port settings stream
-  local body r
+  local body r s="$4"
+  [[ $WITH_CLIENTS == 1 ]] || s=$(jq -c '.clients=[]' <<<"$s")
   if grep -qxF "$1" <<<"$EXISTING"; then ok "$1 — уже есть (пропускаю)"; CREATED+=("$1"); return; fi
-  body=$(jq -nc --arg remark "$1" --arg proto "$2" --argjson port "$3" --argjson s "$4" --argjson st "$5" --argjson sn "$SNIFF" \
+  body=$(jq -nc --arg remark "$1" --arg proto "$2" --argjson port "$3" --argjson s "$s" --argjson st "$5" --argjson sn "$SNIFF" \
     '{remark:$remark,enable:true,listen:"",port:$port,protocol:$proto,expiryTime:0,total:0,up:0,down:0,
       settings:$s,streamSettings:$st,sniffing:$sn}')
   r=$(api POST /panel/api/inbounds/add "$body")
@@ -338,7 +342,9 @@ if [[ -n $CDN_DOMAIN ]]; then
     CDN_SH=/tmp/3x-ui-cdn.sh
     curl -fsSL https://raw.githubusercontent.com/Jasis7/3x-ui-installer/main/cdn.sh -o "$CDN_SH" || die "Не удалось скачать cdn.sh"
   fi
-  bash "$CDN_SH" -d "$CDN_DOMAIN" -t "$CF_TOKEN" -u "$XUI_USERNAME" -w "$XUI_PASSWORD" -l "$API_BASE/" -p 2053 \
+  CDN_ARGS=(-d "$CDN_DOMAIN" -t "$CF_TOKEN" -u "$XUI_USERNAME" -w "$XUI_PASSWORD" -l "$API_BASE/" -p 2053)
+  [[ $WITH_CLIENTS == 1 ]] && CDN_ARGS+=(-C)
+  bash "$CDN_SH" "${CDN_ARGS[@]}" \
     || warn "CDN не настроился — смотрите вывод выше, остальные протоколы работают"
 fi
 
@@ -351,7 +357,7 @@ LINKS=$(api GET /panel/api/inbounds/allLinks | jq -r '.obj // empty | if type=="
   echo "Логин:  ${XUI_USERNAME}"
   echo "Пароль: ${XUI_PASSWORD}"
   echo
-  echo "Подписка клиента (все протоколы): смотрите в панели → Клиенты → subId $SUB"
+  [[ $WITH_CLIENTS == 1 ]] && echo "Подписка тестового клиента: панель → Клиенты → subId $SUB" || echo "Клиентов нет — добавьте в панели (Клиенты → Добавить, отметить нужные инбаунды)"
   echo
   echo "Ссылки:"
   echo "${LINKS:-(не удалось получить — откройте панель)}"
